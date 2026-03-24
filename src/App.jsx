@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
   EFFORTS,
-  INSTAGRAM_MINIMUM,
   INSTAGRAM_TARGET,
   createTask,
   formatChipDate,
@@ -20,8 +19,6 @@ import {
   getSuggestedPoints,
   getTaskDueState,
   getTimelineDays,
-  isCoreComplete,
-  isSunday,
   isWeekday,
   loadState,
   saveState,
@@ -31,11 +28,18 @@ import {
 } from './game.js';
 
 const MAX_POSTS_VISIBLE = 8;
+const NAV_ITEMS = [
+  { id: 'bridge', label: 'Bridge', icon: BridgeIcon },
+  { id: 'missions', label: 'Missions', icon: MissionsIcon },
+  { id: 'quests', label: 'Threat', icon: ThreatIcon },
+  { id: 'forge', label: 'Forge', icon: ForgeIcon }
+];
 
 export default function App() {
   const [state, setState] = useState(() => loadState());
   const [now, setNow] = useState(() => new Date());
   const [selectedDateKey, setSelectedDateKey] = useState(() => toDateKey(new Date()));
+  const [activeTab, setActiveTab] = useState('bridge');
   const [isStandalone, setIsStandalone] = useState(() => detectStandalone());
   const [formError, setFormError] = useState('');
   const [taskForm, setTaskForm] = useState(() => ({
@@ -68,24 +72,30 @@ export default function App() {
   }, []);
 
   const todayKey = toDateKey(now);
-  const profile = getProfile(state, now);
-  const directive = getFocusDirective(state, now);
-  const headline = getHeadlineCopy(state, now);
-  const openBuckets = getOpenTaskBuckets(state, now);
-  const completedTasks = getCompletedTasks(state);
-  const orbitDays = getTimelineDays(todayKey, 3);
+  const todayEntry = getDailyEntry(state, todayKey);
+  const todayBreakdown = getDayBreakdown(state, todayKey, now);
+  const todayMissions = getRecurringMissions(state, todayKey);
+  const todaySbpdMission = todayMissions.find((mission) => mission.id === 'sbpd');
   const selectedEntry = getDailyEntry(state, selectedDateKey);
   const selectedBreakdown = getDayBreakdown(state, selectedDateKey, now);
   const selectedMissions = getRecurringMissions(state, selectedDateKey);
   const sbpdMission = selectedMissions.find((mission) => mission.id === 'sbpd');
   const instagramMission = selectedMissions.find((mission) => mission.id === 'instagram');
   const sundayMission = selectedMissions.find((mission) => mission.id === 'sunday-extra');
+  const orbitDays = getTimelineDays(todayKey, 3);
+  const openBuckets = getOpenTaskBuckets(state, now);
+  const completedTasks = getCompletedTasks(state);
+  const profile = getProfile(state, now);
+  const directive = getFocusDirective(state, now);
+  const headline = getHeadlineCopy(state, now);
   const pointsPreview = getSuggestedPoints(taskForm.effort, taskForm.dueAt, now);
-  const levelProgress =
-    (profile.totalXp - profile.currentLevelFloor) /
-    Math.max(profile.nextLevelFloor - profile.currentLevelFloor, 1);
   const syncPercent = Math.round(profile.syncRate * 100);
   const reactorPercent = Math.round(profile.reactorCharge * 100);
+  const warpPercent = Math.round(
+    ((profile.totalXp - profile.currentLevelFloor) /
+      Math.max(profile.nextLevelFloor - profile.currentLevelFloor, 1)) *
+      100
+  );
 
   function patchDaily(dateKey, partial) {
     setState((current) => {
@@ -147,6 +157,7 @@ export default function App() {
       notes: ''
     });
     setFormError('');
+    setActiveTab('quests');
   }
 
   function toggleTask(taskId) {
@@ -189,95 +200,142 @@ export default function App() {
   return (
     <div className="app-shell">
       <main className="hud-board">
-        <section className="hero-panel">
-          <div className="hero-copy">
-            <span className="eyebrow">Deep Space Command / Sector Tau Ceti</span>
-            <h1>Gameday</h1>
-            <p className="hero-tagline">
-              Un tablero de mando para convertir deadlines y procrastinacion en avance visible,
-              racha y sensacion de conquista.
-            </p>
-            <p className="hero-status">{headline}</p>
+        {activeTab === 'bridge' && (
+          <div className="screen-stack">
+            <section className="hero-panel">
+              <div className="hero-copy">
+                <span className="eyebrow">Deep Space Command / Sector Tau Ceti</span>
+                <h1>Gameday</h1>
+                <p className="hero-tagline">
+                  Un tablero de mando para convertir deadlines y procrastinacion en avance visible,
+                  racha y sensacion de conquista.
+                </p>
+                <p className="hero-status">{headline}</p>
+              </div>
+
+              <div className="directive-card">
+                <span className="directive-badge">{directive.badge}</span>
+                <h2>{directive.title}</h2>
+                <p>{directive.body}</p>
+                <div className="shortcut-row">
+                  <button type="button" className="action-button" onClick={() => setActiveTab('missions')}>
+                    Abrir misiones
+                  </button>
+                  <button type="button" className="ghost-button" onClick={() => setActiveTab('quests')}>
+                    Ver threat map
+                  </button>
+                </div>
+              </div>
+
+              <div className="hero-metrics">
+                <MetricCard label="Nivel" value={profile.level} sub={profile.rank} tone="cyan" />
+                <MetricCard
+                  label="Amenaza"
+                  value={`${profile.threatScore}%`}
+                  sub={profile.threat.label}
+                  tone={profile.threat.tone}
+                />
+                <MetricCard label="Racha" value={profile.currentStreak} sub={getStreakCopy(profile)} tone="violet" />
+                <MetricCard label="Hoy" value={profile.todayXp} sub={profile.todayGrade} tone="amber" />
+              </div>
+
+              <div className="meter-grid">
+                <HudMeter
+                  label="Sync rate"
+                  value={syncPercent}
+                  caption={`${syncPercent}% de coherencia diaria`}
+                  tone="cyan"
+                />
+                <HudMeter
+                  label="Reactor"
+                  value={reactorPercent}
+                  caption={`${reactorPercent}% de carga hoy`}
+                  tone="violet"
+                />
+                <HudMeter
+                  label="Warp XP"
+                  value={warpPercent}
+                  caption={`${Math.max(profile.nextLevelFloor - profile.totalXp, 0)} XP al siguiente nivel`}
+                  tone="amber"
+                />
+              </div>
+            </section>
+
+            <section className="panel panel-dark">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">Bridge feed</span>
+                  <h2>Hoy en una sola lectura</h2>
+                </div>
+                <StatusPill
+                  label={todayBreakdown.grade.name}
+                  detail={todayBreakdown.grade.lore}
+                  tone={todayBreakdown.grade.tone}
+                />
+              </div>
+
+              <div className="overview-grid">
+                <OverviewCard label="XP hoy" value={todayBreakdown.totalXp} />
+                <OverviewCard
+                  label="SBPD"
+                  value={isWeekday(todayKey) ? `${todayBreakdown.sbpdCompleted}/${todayBreakdown.sbpdTotal}` : 'free'}
+                />
+                <OverviewCard label="Posts" value={`${todayEntry.instagramCount}/${INSTAGRAM_TARGET}`} />
+                <OverviewCard label="Quests" value={`${todayBreakdown.tasksDone}`} />
+              </div>
+
+              <div className="bridge-grid">
+                <IntelCard
+                  label="Ventana actual"
+                  value={todaySbpdMission?.status === 'done' ? 'SBPD limpio' : directive.badge}
+                  tone="cyan"
+                />
+                <IntelCard label="Portal diario" value={getCountdownToMidnight(now)} tone="amber" />
+                <IntelCard label="Overdue" value={`${profile.overdueCount}`} tone={profile.threat.tone} />
+                <IntelCard label="Core" value={profile.todayCoreComplete ? 'cerrado' : 'abierto'} tone="violet" />
+              </div>
+            </section>
           </div>
+        )}
 
-          <div className="directive-card">
-            <span className="directive-badge">{directive.badge}</span>
-            <h2>{directive.title}</h2>
-            <p>{directive.body}</p>
-          </div>
+        {activeTab === 'missions' && (
+          <div className="screen-stack">
+            <section className="panel panel-dark">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">Star map</span>
+                  <h2>Orbita semanal</h2>
+                </div>
+                <p className="section-note">Toca un planeta para editar su estado.</p>
+              </div>
 
-          <div className="hero-metrics">
-            <MetricCard label="Nivel" value={profile.level} sub={profile.rank} tone="cyan" />
-            <MetricCard
-              label="Amenaza"
-              value={`${profile.threatScore}%`}
-              sub={profile.threat.label}
-              tone={profile.threat.tone}
-            />
-            <MetricCard label="Racha" value={profile.currentStreak} sub={getStreakCopy(profile)} tone="violet" />
-            <MetricCard label="Hoy" value={profile.todayXp} sub={profile.todayGrade} tone="amber" />
-          </div>
+              <div className="orbit-strip">
+                {orbitDays.map((day) => {
+                  const dayBreakdown = getDayBreakdown(state, day.dateKey, now);
+                  const isSelected = day.dateKey === selectedDateKey;
+                  const isToday = day.dateKey === todayKey;
 
-          <div className="meter-grid">
-            <HudMeter
-              label="Sync rate"
-              value={syncPercent}
-              caption={`${syncPercent}% de coherencia diaria`}
-              tone="cyan"
-            />
-            <HudMeter
-              label="Reactor"
-              value={reactorPercent}
-              caption={`${reactorPercent}% de carga en el dia`}
-              tone="violet"
-            />
-            <HudMeter
-              label="Warp XP"
-              value={Math.round(levelProgress * 100)}
-              caption={`${Math.max(profile.nextLevelFloor - profile.totalXp, 0)} XP al siguiente nivel`}
-              tone="amber"
-            />
-          </div>
-        </section>
+                  return (
+                    <button
+                      key={day.dateKey}
+                      type="button"
+                      className={`orbit-chip is-${dayBreakdown.grade.tone}${isSelected ? ' is-selected' : ''}${
+                        dayBreakdown.coreComplete ? ' is-complete' : ''
+                      }`}
+                      onClick={() => setSelectedDateKey(day.dateKey)}
+                    >
+                      <span className="orbit-chip-top">
+                        <span>{day.short}</span>
+                        <small>{isToday ? 'Hoy' : day.offset > 0 ? `+${day.offset}` : `${day.offset}`}</small>
+                      </span>
+                      <strong>{formatChipDate(day.dateKey)}</strong>
+                      <span className="orbit-chip-bottom">{dayBreakdown.grade.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
 
-        <section className="panel panel-dark">
-          <div className="section-head">
-            <div>
-              <span className="eyebrow">Star map</span>
-              <h2>Orbita semanal</h2>
-            </div>
-            <p className="section-note">{getCountdownToMidnight(now)} hasta que cierre el portal diario.</p>
-          </div>
-
-          <div className="orbit-strip">
-            {orbitDays.map((day) => {
-              const dayBreakdown = getDayBreakdown(state, day.dateKey, now);
-              const isSelected = day.dateKey === selectedDateKey;
-              const isToday = day.dateKey === todayKey;
-
-              return (
-                <button
-                  key={day.dateKey}
-                  type="button"
-                  className={`orbit-chip is-${dayBreakdown.grade.tone}${isSelected ? ' is-selected' : ''}${
-                    dayBreakdown.coreComplete ? ' is-complete' : ''
-                  }`}
-                  onClick={() => setSelectedDateKey(day.dateKey)}
-                >
-                  <span className="orbit-chip-top">
-                    <span>{day.short}</span>
-                    <small>{isToday ? 'Hoy' : day.offset > 0 ? `+${day.offset}` : `${day.offset}`}</small>
-                  </span>
-                  <strong>{formatChipDate(day.dateKey)}</strong>
-                  <span className="orbit-chip-bottom">{dayBreakdown.grade.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="layout-grid">
-          <div className="main-column">
             <section className="panel mission-panel">
               <div className="section-head">
                 <div>
@@ -301,10 +359,7 @@ export default function App() {
                       : 'free'
                   }
                 />
-                <OverviewCard
-                  label="Posts"
-                  value={`${selectedEntry.instagramCount}/${INSTAGRAM_TARGET}`}
-                />
+                <OverviewCard label="Posts" value={`${selectedEntry.instagramCount}/${INSTAGRAM_TARGET}`} />
                 <OverviewCard label="Quests" value={`${selectedBreakdown.tasksDone}`} />
               </div>
 
@@ -378,15 +433,13 @@ export default function App() {
                   <div className="signal-track">
                     <div
                       className="signal-fill"
-                      style={{
-                        width: `${Math.min((selectedEntry.instagramCount / MAX_POSTS_VISIBLE) * 100, 100)}%`
-                      }}
+                      style={{ width: `${Math.min((selectedEntry.instagramCount / MAX_POSTS_VISIBLE) * 100, 100)}%` }}
                     />
                   </div>
 
                   <div className="signal-legend">
-                    <span>{INSTAGRAM_MINIMUM} estabiliza el dia</span>
-                    <span>{INSTAGRAM_TARGET} activa overdrive</span>
+                    <span>5 estabiliza el dia</span>
+                    <span>6 activa overdrive</span>
                   </div>
                 </article>
               ) : null}
@@ -415,7 +468,11 @@ export default function App() {
                 </article>
               ) : null}
             </section>
+          </div>
+        )}
 
+        {activeTab === 'quests' && (
+          <div className="screen-stack">
             <section className="panel panel-dark">
               <div className="section-head">
                 <div>
@@ -471,9 +528,7 @@ export default function App() {
                   <span className="eyebrow">Hangar</span>
                   <h2>Misiones cobradas</h2>
                 </div>
-                <p className="section-note">
-                  Tu evidencia visual de que si estas moviendo la nave.
-                </p>
+                <p className="section-note">Historial reciente de progreso real.</p>
               </div>
 
               {completedTasks.length ? (
@@ -507,21 +562,10 @@ export default function App() {
               )}
             </section>
           </div>
+        )}
 
-          <aside className="side-column">
-            {!isStandalone && (
-              <section className="panel install-panel">
-                <span className="eyebrow">iPhone mode</span>
-                <h2>Instalala como nave real</h2>
-                <p>Abrela en Safari, toca Share y luego Add to Home Screen.</p>
-                <div className="install-steps">
-                  <span>1. Safari</span>
-                  <span>2. Share</span>
-                  <span>3. Add to Home Screen</span>
-                </div>
-              </section>
-            )}
-
+        {activeTab === 'forge' && (
+          <div className="screen-stack">
             <section className="panel side-panel">
               <div className="section-head compact">
                 <div>
@@ -539,7 +583,7 @@ export default function App() {
 
               <div className="system-lines">
                 <SystemLine label="Core del dia" value={profile.todayCoreComplete ? 'asegurado' : 'abierto'} />
-                <SystemLine label="Posts hoy" value={`${getDailyEntry(state, todayKey).instagramCount}/${INSTAGRAM_TARGET}`} />
+                <SystemLine label="Posts hoy" value={`${todayEntry.instagramCount}/${INSTAGRAM_TARGET}`} />
                 <SystemLine label="Open quests" value={`${profile.openCount}`} />
                 <SystemLine label="Racha potencial" value={`${profile.projectedStreak}`} />
               </div>
@@ -620,9 +664,45 @@ export default function App() {
                 {formError ? <p className="form-error">{formError}</p> : null}
               </form>
             </section>
-          </aside>
-        </section>
+
+            {!isStandalone && (
+              <section className="panel install-panel">
+                <span className="eyebrow">iPhone mode</span>
+                <h2>Instalala como nave real</h2>
+                <p>Abrela en Safari, toca Share y luego Add to Home Screen.</p>
+                <div className="install-steps">
+                  <span>1. Safari</span>
+                  <span>2. Share</span>
+                  <span>3. Add to Home Screen</span>
+                </div>
+              </section>
+            )}
+          </div>
+        )}
       </main>
+
+      <nav className="bottom-nav" aria-label="Navegacion principal">
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          const badge = item.id === 'quests' && profile.overdueCount > 0 ? profile.overdueCount : null;
+
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`nav-button${isActive ? ' is-active' : ''}`}
+              onClick={() => setActiveTab(item.id)}
+            >
+              <span className="nav-icon">
+                <Icon />
+              </span>
+              <span className="nav-label">{item.label}</span>
+              {badge ? <span className="nav-badge">{badge}</span> : null}
+            </button>
+          );
+        })}
+      </nav>
     </div>
   );
 }
@@ -734,6 +814,48 @@ function TaskCard({ task, now, onToggle, onDelete }) {
         </button>
       </div>
     </article>
+  );
+}
+
+function BridgeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 4a8 8 0 1 0 8 8" />
+      <path d="M12 8v4l3 2" />
+      <path d="M4 20h16" />
+    </svg>
+  );
+}
+
+function MissionsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="7" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+    </svg>
+  );
+}
+
+function ThreatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 5h12" />
+      <path d="M6 12h12" />
+      <path d="M6 19h8" />
+      <circle cx="18" cy="19" r="2" />
+    </svg>
+  );
+}
+
+function ForgeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3v18" />
+      <path d="M3 12h18" />
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
+    </svg>
   );
 }
 
